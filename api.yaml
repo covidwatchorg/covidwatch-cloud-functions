@@ -37,7 +37,18 @@ paths:
                       memo:
                         type: string
                       rvk:
-                        type: string
+                        type: object
+                        # this should be implemented in JWK format specified
+                        # in https://tools.ietf.org/html/rfc7517
+                        # An example is below:
+                        # {
+                        #  "kty" : "OKP",
+                        #  "crv" : "Ed25519",
+                        #  "x"   : "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+                        #  "d"   : "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
+                        #  "use" : "sig",
+                        #  "kid" : "FdFYFzERwC2uCBB46pZQi4GG85LujR8obt-KWRBICVQ"
+                        # }
                       signature:
                         type: string
                       timestamp:
