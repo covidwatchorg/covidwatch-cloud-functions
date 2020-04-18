@@ -1,0 +1,91 @@
+openapi: 3.0.0
+info:
+  version: 1.0.0
+  title: CovidWatch API
+  description: An API for submitting reports upon testing positive for covid19 fetching reports to check for contact events
+
+paths:
+  /reports:
+    # GET request, to be an open endpoint for fteching reports
+    get:
+      description: Returns a list of reports posted since the timestamp specified
+      # /reports?timestamp=<timestamp>
+      parameters:
+        - in: query
+          name: timestamp
+          schema:
+            type: integer
+          description: Fetch reports uploaded since timestamp
+      responses:
+        '200':
+          description: Successfully fetched reports
+          content:
+            application/json:
+                schema:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      tck_start:
+                        type: string
+                      contact_time_start:
+                        type: timestamp
+                      contact_time_end:
+                        type: timestamp
+                      memo_type:
+                        type: byte
+                      memo:
+                        type: string
+                      rvk:
+                        type: string
+                      signature:
+                        type: string
+                      timestamp:
+                        type: timestamp
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+    post:
+      description: Upload a report after positive test
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tck_start:
+                  type: string
+                contact_time_start:
+                  type: timestamp
+                contact_time_end:
+                  type: timestamp
+                memo_type:
+                  type: byte
+                memo:
+                  type: string
+                rvk:
+                  type: string
+                signature:
+                  type: string
+                timestamp:
+                  type: timestamp
+      responses:
+        '200':
+          description: Successfully created a new artist
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
