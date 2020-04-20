@@ -20,39 +20,14 @@ paths:
         '200':
           description: Successfully fetched reports
           content:
-            application/json:
-                schema:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      tck_start:
-                        type: string
-                      contact_time_start:
-                        type: timestamp
-                      contact_time_end:
-                        type: timestamp
-                      memo_type:
-                        type: byte
-                      memo:
-                        type: string
-                      rvk:
-                        type: object
-                        # this should be implemented in JWK format specified
-                        # in https://tools.ietf.org/html/rfc7517
-                        # An example is below:
-                        # {
-                        #  "kty" : "OKP",
-                        #  "crv" : "Ed25519",
-                        #  "x"   : "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
-                        #  "d"   : "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
-                        #  "use" : "sig",
-                        #  "kid" : "FdFYFzERwC2uCBB46pZQi4GG85LujR8obt-KWRBICVQ"
-                        # }
-                      signature:
-                        type: string
-                      timestamp:
-                        type: timestamp
+            text/plain:
+              schema:
+                # sends concatenated reports to be consumed and parsed
+                # by a library that implements TCN protocol.
+                # documentation for the protocol can be found at
+                # https://github.com/TCNCoalition/TCN/blob/main/README.md
+                type: string
+                format: byte
         '400':
           description: Invalid request
           content:
@@ -68,26 +43,14 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          text/plain:
             schema:
-              type: object
-              properties:
-                tck_start:
-                  type: string
-                contact_time_start:
-                  type: timestamp
-                contact_time_end:
-                  type: timestamp
-                memo_type:
-                  type: byte
-                memo:
-                  type: string
-                rvk:
-                  type: string
-                signature:
-                  type: string
-                timestamp:
-                  type: timestamp
+              # sends concatenated values in report as specified by
+              # TCN protocol
+              # documentation for the protocol can be found at
+              # https://github.com/TCNCoalition/TCN/blob/main/README.md
+              type: string
+              format: byte
       responses:
         '200':
           description: Successfully uploaded a report
