@@ -12,6 +12,8 @@ import (
 
 func main() {
 	funcframework.RegisterHTTPFunction("/challenge", functions.ChallengeHandler)
+	funcframework.RegisterHTTPFunction("/report", functions.ReportHandler)
+	funcframework.RegisterHTTPFunction("/validate", functions.ValidateHandler)
 	// Use PORT environment variable, or default to 8080.
 	port := "8080"
 	if envPort := os.Getenv("PORT"); envPort != "" {

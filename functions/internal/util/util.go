@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/option"
@@ -30,6 +31,32 @@ type testFirestoreContextKey struct{}
 // connect to a Firestore instance, as is its normal behavior.
 func WithTestFirestore(parent context.Context, store *TestFirestore) context.Context {
 	return context.WithValue(parent, testFirestoreContextKey{}, store)
+}
+
+// fakeClockKey is a key used to identify the fake clock. Since it is not
+// exported, there is no way for code outside of this package to overwrite or
+// access values stored with this key.
+type fakeClockKey struct{}
+
+// WithFakeClock stores a fake time in a context. If Now is called on the
+// returned context, the given fake time will be returned instead of the real
+// time.
+func WithFakeClock(parent context.Context, time time.Duration) context.Context {
+	return context.WithValue(parent, fakeClockKey{}, &time)
+}
+
+// Now attempts to extract a fake clock from ctx. If a fake clock was attached
+// using WithFakeClock, then it is returned. If no fake clock is found, then the
+// result of time.Now() is returned.
+func Now(ctx context.Context) time.Time {
+	switch t := ctx.Value(fakeClockKey{}).(type) {
+	case nil:
+		return time.Now()
+	case *time.Duration:
+		return time.Unix(0, int64(*t))
+	default:
+		panic("unreachable")
+	}
 }
 
 // Context is a context.Context that provides extra utilities for common
@@ -116,6 +143,36 @@ func (c *Context) ValidateRequestMethod(method, err string) StatusError {
 	return nil
 }
 
+// RunTransaction wraps firestore.Client.RunTransaction. If the transaction
+// fails for reasons other than f failing, the resulting error will be wrapped
+// with NewInternalStatusError.
+func (c *Context) RunTransaction(f func(ctx context.Context, txn *firestore.Transaction) StatusError) StatusError {
+	return RunTransaction(c, c.FirestoreClient(), f)
+}
+
+// RunTransaction wraps firestore.Client.RunTransaction. If the transaction
+// fails for reasons other than f failing, the resulting error will be wrapped
+// with NewInternalStatusError.
+func RunTransaction(ctx context.Context, c *firestore.Client, f func(ctx context.Context, txn *firestore.Transaction) StatusError) StatusError {
+	err := c.RunTransaction(
+		ctx,
+		func(ctx context.Context, txn *firestore.Transaction) error {
+			return f(ctx, txn)
+		},
+	)
+	switch err := err.(type) {
+	case nil:
+		return nil
+	case StatusError:
+		return err
+	default:
+		// If err doesn't implement StatusError, then it must not have come from
+		// f, which means that it was an error with running the transaction not
+		// related to business logic, so it's an internal server error.
+		return NewInternalServerError(err)
+	}
+}
+
 // StatusError is implemented by error types which correspond to a particular
 // HTTP status code.
 type StatusError interface {
@@ -181,6 +238,16 @@ func NewMethodNotAllowedError(method string) StatusError {
 	}
 }
 
+// NewNotImplementedError returns a StatusError whose HTTPStatusCode method
+// returns http.StatusNotImplemented and whose Message method returns "not
+// implemented".
+func NewNotImplementedError() StatusError {
+	return statusError{
+		code:  http.StatusNotImplemented,
+		error: fmt.Errorf("not implemented"),
+	}
+}
+
 var (
 	// NotFoundError is an error returned when a resource is not found.
 	NotFoundError = NewBadRequestError(errors.New("not found"))
@@ -211,7 +278,7 @@ func JSONToStatusError(err error) StatusError {
 		*json.UnmarshalTypeError, *json.UnsupportedTypeError, *json.UnsupportedValueError:
 		return NewBadRequestError(err)
 	default:
-		if err == io.EOF {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			return NewBadRequestError(err)
 		}
 		return NewInternalServerError(err)
