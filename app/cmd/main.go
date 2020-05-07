@@ -11,7 +11,8 @@ import (
 
 func main() {
 	funcframework.RegisterHTTPFunction("/challenge", app.ChallengeHandler)
-	// Use PORT environment variable, or default to 8080.
+	funcframework.RegisterHTTPFunction("/report", app.ReportHandler)
+	// Use PORT environment variable, or default to 8088.
 	port := "8088"
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		port = envPort
