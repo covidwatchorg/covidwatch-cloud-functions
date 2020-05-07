@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
@@ -80,8 +81,9 @@ func (c *Context) WriteStatusError(err StatusError) {
 func ValidateRequestMethod(ctx *Context, method, err string) error {
 	m := ctx.HTTPRequest().Method
 	if m != method {
-		http.Error(ctx.HTTPResponseWriter(), err, http.StatusMethodNotAllowed)
-		return fmt.Errorf("unsupported method: %v", m)
+		err := NewMethodNotAllowedError(m)
+		ctx.WriteStatusError(err)
+		return err
 	}
 
 	return nil
@@ -141,6 +143,16 @@ func NewBadRequestError(err error) StatusError {
 	}
 }
 
+// NewMethodNotAllowedError wraps err in a StatusError whose HTTPStatusCode
+// method returns http.StatusMethodNotAllowed and whose Message method returns
+// "unsupported method: " followed by the given method string.
+func NewMethodNotAllowedError(method string) StatusError {
+	return statusError{
+		code:  http.StatusMethodNotAllowed,
+		error: fmt.Errorf("unsupported method: %v", method),
+	}
+}
+
 var (
 	notFoundError = NewBadRequestError(errors.New("not found"))
 )
@@ -153,6 +165,23 @@ func FirestoreToStatusError(err error) StatusError {
 	}
 
 	return NewInternalServerError(err)
+}
+
+// JSONToStatusError converts an error returned from the "encoding/json" package
+// to a StatusError. It assumes that all error types defined in the
+// "encoding/json" package and io.EOF are bad request errors and all others are
+// internal server errors.
+func JSONToStatusError(err error) StatusError {
+	switch err := err.(type) {
+	case *json.MarshalerError, *json.SyntaxError, *json.UnmarshalFieldError,
+		*json.UnmarshalTypeError, *json.UnsupportedTypeError, *json.UnsupportedValueError:
+		return NewBadRequestError(err)
+	default:
+		if err == io.EOF {
+			return NewBadRequestError(err)
+		}
+		return NewInternalServerError(err)
+	}
 }
 
 // ReadCryptoRandBytes fills b with cryptographically random bytes from the
