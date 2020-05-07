@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 )
@@ -42,15 +41,6 @@ func NewTestFirestore(t *testing.T) *TestFirestore {
 		emulator:  emul,
 		projectID: "test-" + hex.EncodeToString(bytes[:]),
 	}
-}
-
-// FirestoreClient creates a *firestore.Client which connects to this Firestore.
-func (t *TestFirestore) FirestoreClient(ctx context.Context) (*firestore.Client, error) {
-	opt, err := t.clientOption()
-	if err != nil {
-		return nil, err
-	}
-	return firestore.NewClient(ctx, t.projectID, opt)
 }
 
 func (t *TestFirestore) clientOption() (option.ClientOption, error) {

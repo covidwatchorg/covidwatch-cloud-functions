@@ -11,104 +11,231 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/firestore"
-	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // Context is a context.Context that provides extra utilities for common
 // operations.
+//
+// In testing - when a Context is constructed using NewTestContext - Context
+// stores a fake clock to make tests deterministic. All code should use
+// Context.Now() - which uses this fake clock during testing, and time.Now() in
+// production - rather than time.Now().
 type Context struct {
-	resp   http.ResponseWriter
-	req    *http.Request
 	client *firestore.Client
-
+	// A fake clock for use in testing. The real clock (time.Now()) is used if
+	// this is nil. This is interpreted as nanoseconds since the Unix epoch.
+	clock *time.Duration
+	// If this is false, then AllowEmptyChallengeSolution returns false. If this
+	// is true, then AllowEmptyChallengeSolution returns true iff the
+	// ALLOW_EMPTY_CHALLENGE_SOLUTION environment variable is set. This is only
+	// set to true in NewDevContext.
+	allowEmptyChallengeSolution bool
 	context.Context
 }
 
-// NewContext constructs a new Context from an http.ResponseWriter and an
-// *http.Request. It uses the firestore.DetectProjectID Firestore project, which
-// instructs firestore.NewClient to use environment variables to detect the
-// appropriate Firestore configuration.
-func NewContext(w http.ResponseWriter, r *http.Request) (Context, StatusError) {
-	ctx := r.Context()
+// NewContext constructs a new Context by wrapping an existing context.Context.
+// It uses the firestore.DetectProjectID Firestore project, which instructs
+// firestore.NewClient to use environment variables to detect the appropriate
+// Firestore configuration.
+func NewContext(ctx context.Context) (*Context, StatusError) {
 	client, err := firestore.NewClient(ctx, firestore.DetectProjectID)
 	if err != nil {
 		err := NewInternalServerError(err)
-		return Context{}, err
+		return nil, err
 	}
 
-	return Context{
-		resp:    w,
-		req:     r,
-		client:  client,
-		Context: ctx,
+	return &Context{
+		client: client,
+		// Do not set the fake clock.
+		clock:                       nil,
+		allowEmptyChallengeSolution: false,
+		Context:                     ctx,
 	}, nil
 }
 
-// NewTestContext constructs a new Context from an http.ResponseWriter and an
-// *http.Request. Unlike NewContext, it is intended for use in testing, and uses
-// a Firestore emulator rather than a production Firestore instance. In
-// particular:
-//  - If store is nil, then NewTestContext checks that `FIRESTORE_EMULATOR_HOST`
-//    is set. If it is, then it connects to the Firestore emulator at that host.
-//    If it is not set, an error is returned.
-//  - If store is not nil, then NewTestContext connects to that Firestore
-//    emulator.
-func NewTestContext(w http.ResponseWriter, r *http.Request, store *TestFirestore) (Context, StatusError) {
+// NewDevContext constructs a new Context by wrapping an existing
+// context.Context. Unlike NewContext, it is intended for use in local
+// development, and uses a Firestore emulator rather than a production Firestore
+// instance. It checks that the FIRESTORE_EMULATOR_HOST environment variable is
+// set, and connects to the emulator at that host.
+func NewDevContext(ctx context.Context) (*Context, StatusError) {
 	const emulatorHostEnvVar = "FIRESTORE_EMULATOR_HOST"
-
-	projectID := "test"
-	var clientOptions []option.ClientOption
-	if store != nil {
-		opt, err := store.clientOption()
-		if err != nil {
-			return Context{}, NewInternalServerError(err)
-		}
-		clientOptions = append(clientOptions, opt)
-		projectID = store.projectID
-	} else if os.Getenv(emulatorHostEnvVar) == "" {
-		return Context{}, NewInternalServerError(fmt.Errorf(
+	if os.Getenv(emulatorHostEnvVar) == "" {
+		return nil, NewInternalServerError(fmt.Errorf(
 			"could not connect to Firestore emulator; %v environment variable not present", emulatorHostEnvVar,
 		))
 	}
 
-	ctx := r.Context()
-	client, err := firestore.NewClient(ctx, projectID, clientOptions...)
+	client, err := firestore.NewClient(ctx, firestore.DetectProjectID)
 	if err != nil {
-		return Context{}, NewInternalServerError(err)
+		err := NewInternalServerError(err)
+		return nil, err
 	}
 
-	return Context{
-		resp:    w,
-		req:     r,
-		client:  client,
-		Context: ctx,
+	return &Context{
+		client: client,
+		// Do not set the fake clock.
+		clock:                       nil,
+		allowEmptyChallengeSolution: true,
+		Context:                     ctx,
 	}, nil
 }
 
-// HTTPRequest returns the *http.Request that was used to construct this
-// Context.
-func (c *Context) HTTPRequest() *http.Request {
-	return c.req
+// NewTestContext constructs a new Context by wrapping an existing
+// context.Context. Unlike NewContext, it is intended for use in testing, and
+// uses the Firestore emulator rather than a production Firestore instance.
+//
+// The returned Context also contains a fake clock for use in testing,
+// initialized to the Unix epoch.
+func NewTestContext(ctx context.Context, store *TestFirestore) (*Context, StatusError) {
+	opt, err := store.clientOption()
+	if err != nil {
+		return nil, NewInternalServerError(err)
+	}
+
+	client, err := firestore.NewClient(ctx, store.projectID, opt)
+	if err != nil {
+		return nil, NewInternalServerError(err)
+	}
+
+	return &Context{
+		client:                      client,
+		clock:                       new(time.Duration),
+		allowEmptyChallengeSolution: false,
+		Context:                     ctx,
+	}, nil
 }
 
-// HTTPResponseWriter returns the http.ResponseWriter that was used to construct
-// this Context.
-func (c *Context) HTTPResponseWriter() http.ResponseWriter {
-	return c.resp
+// Now returns the current time. If this Context was constructed using
+// NewTestContext, then the Context stores a fake clock, and that is used for
+// the current time. Otherwise, time.Now() is used.
+func (c *Context) Now() time.Time {
+	if c.clock != nil {
+		return time.Unix(0, int64(*c.clock))
+	}
+	return time.Now()
 }
 
-// FirestoreClient returns the firestore Client.
+// Elapse moves the fake clock forward by d. It panics if c was constructed
+// using NewContext, and so there is no fake clock set.
+func (c *Context) Elapse(d time.Duration) {
+	*c.clock += d
+}
+
+// FirestoreClient returns the firestore.Client.
 func (c *Context) FirestoreClient() *firestore.Client {
 	return c.client
 }
 
+var allowEmptyChallengeSolutionEnvVarSet = os.Getenv("ALLOW_EMPTY_CHALLENGE_SOLUTION") != ""
+
+// AllowEmptyChallengeSolution returns whether challenge validation should be
+// skipped if the client supplies a present but empty challenge. It is only true
+// if c was constructed using NewDevContext AND the
+// ALLOW_EMPTY_CHALLENGE_SOLUTION environment variable was set at program
+// initialization (modifying the variable after initialization will not affect
+// the behavior of this method).
+func (c *Context) AllowEmptyChallengeSolution() bool {
+	return c.allowEmptyChallengeSolution && allowEmptyChallengeSolutionEnvVarSet
+}
+
+// RunTransaction wraps firestore.Client.RunTransaction. If the transaction
+// fails for reasons other than f failing, the resulting error will be wrapped
+// with NewInternalStatusError.
+func (c *Context) RunTransaction(f func(ctx context.Context, txn *firestore.Transaction) StatusError) StatusError {
+	return RunTransaction(c, c.FirestoreClient(), f)
+}
+
+// RunTransaction wraps firestore.Client.RunTransaction. If the transaction
+// fails for reasons other than f failing, the resulting error will be wrapped
+// with NewInternalStatusError.
+func RunTransaction(ctx context.Context, c *firestore.Client, f func(ctx context.Context, txn *firestore.Transaction) StatusError) StatusError {
+	err := c.RunTransaction(
+		ctx,
+		func(ctx context.Context, txn *firestore.Transaction) error {
+			return f(ctx, txn)
+		},
+	)
+	switch err := err.(type) {
+	case nil:
+		return nil
+	case StatusError:
+		return err
+	default:
+		// If err doesn't implement StatusError, then it must not have come from
+		// f, which means that it was an error with running the transaction not
+		// related to business logic, so it's an internal server error.
+		return NewInternalServerError(err)
+	}
+}
+
+// RequestContext wraps a Context, and provides extra utilities for handling
+// HTTP requests by operating on a request's http.ResponseWriter and
+// *http.Request.
+type RequestContext struct {
+	resp http.ResponseWriter
+	req  *http.Request
+	*Context
+}
+
+// NewRequestContext constructs a new RequestContext by calling
+// NewContext(r.Context()), and wrapping the result in a RequestContext.
+func NewRequestContext(w http.ResponseWriter, r *http.Request) (*RequestContext, StatusError) {
+	ctx, err := NewContext(r.Context())
+	return newRequestContext(w, r, ctx, err)
+}
+
+// NewDevRequestContext constructs a new RequestContext by calling
+// NewDevContext(r.Context()), and wrapping the result in a RequestContext.
+func NewDevRequestContext(w http.ResponseWriter, r *http.Request) (*RequestContext, StatusError) {
+	ctx, err := NewDevContext(r.Context())
+	return newRequestContext(w, r, ctx, err)
+}
+
+// NewTestRequestContext constructs a new RequestContext by calling
+// NewTestContext(r.Context(), store), and wrapping the result in a
+// RequestContext.
+func NewTestRequestContext(w http.ResponseWriter, r *http.Request, store *TestFirestore) (*RequestContext, StatusError) {
+	ctx, err := NewTestContext(r.Context(), store)
+	return newRequestContext(w, r, ctx, err)
+}
+
+func newRequestContext(w http.ResponseWriter, r *http.Request, ctx *Context, err StatusError) (*RequestContext, StatusError) {
+	if err != nil {
+		return nil, err
+	}
+	return &RequestContext{
+		resp:    w,
+		req:     r,
+		Context: ctx,
+	}, nil
+}
+
+// Inner returns the wrapped *Context.
+func (c *RequestContext) Inner() *Context {
+	return c.Context
+}
+
+// HTTPRequest returns the *http.Request that was used to construct this
+// RequestContext.
+func (c *RequestContext) HTTPRequest() *http.Request {
+	return c.req
+}
+
+// HTTPResponseWriter returns the http.ResponseWriter that was used to construct
+// this RequestContext.
+func (c *RequestContext) HTTPResponseWriter() http.ResponseWriter {
+	return c.resp
+}
+
 // ValidateRequestMethod validates that c.HTTPRequest().Method == method, and if
 // not, returns an appropriate StatusError.
-func (c *Context) ValidateRequestMethod(method, err string) StatusError {
+func (c *RequestContext) ValidateRequestMethod(method, err string) StatusError {
 	m := c.HTTPRequest().Method
 	if m != method {
 		return NewMethodNotAllowedError(m)
@@ -180,6 +307,16 @@ func NewMethodNotAllowedError(method string) StatusError {
 	}
 }
 
+// NewNotImplementedError returns a StatusError whose HTTPStatusCode method
+// returns http.StatusNotImplemented and whose Message method returns "not
+// implemented".
+func NewNotImplementedError() StatusError {
+	return statusError{
+		code:  http.StatusNotImplemented,
+		error: fmt.Errorf("not implemented"),
+	}
+}
+
 var (
 	// NotFoundError is an error returned when a resource is not found.
 	NotFoundError = NewBadRequestError(errors.New("not found"))
@@ -210,7 +347,7 @@ func JSONToStatusError(err error) StatusError {
 		*json.UnmarshalTypeError, *json.UnsupportedTypeError, *json.UnsupportedValueError:
 		return NewBadRequestError(err)
 	default:
-		if err == io.EOF {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			return NewBadRequestError(err)
 		}
 		return NewInternalServerError(err)

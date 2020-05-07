@@ -13,12 +13,12 @@ import (
 var ChallengeHTTPHandler = util.MakeHTTPHandler(ChallengeHandler)
 
 // ChallengeHandler is a handler for the /challenge endpoint.
-func ChallengeHandler(ctx *util.Context) util.StatusError {
+func ChallengeHandler(ctx *util.RequestContext) util.StatusError {
 	if err := ctx.ValidateRequestMethod("GET", ""); err != nil {
 		return err
 	}
 
-	c, err := pow.GenerateChallenge(ctx)
+	c, err := pow.GenerateChallenge(ctx.Inner())
 	if err != nil {
 		return util.NewInternalServerError(err)
 	}

@@ -152,7 +152,7 @@ type challengeDoc struct {
 func GenerateChallenge(ctx *util.Context) (*Challenge, error) {
 	c := generateChallenge(DefaultWorkFactor)
 
-	doc := challengeDoc{Expiration: time.Now().Add(expirationPeriod)}
+	doc := challengeDoc{Expiration: ctx.Now().Add(expirationPeriod)}
 	_, err := ctx.FirestoreClient().Collection(challengeCollection).Doc(c.docID()).Create(ctx, doc)
 	if err != nil {
 		return nil, err
@@ -194,8 +194,7 @@ func ValidateSolution(ctx *util.Context, cs *ChallengeSolution) util.StatusError
 		return util.FirestoreToStatusError(err)
 	}
 
-	now := time.Now()
-	if challengeDoc.Expiration.Before(now) {
+	if challengeDoc.Expiration.Before(ctx.Now()) {
 		return challengeExpiredError
 	}
 
