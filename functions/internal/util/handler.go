@@ -9,14 +9,14 @@ import (
 // Handler is a handler for a request to this service. Use MakeHTTPHandler or
 // MakeTestHTTPHandler to wrap a Handler with the logic necessary to produce a
 // handler which can be registered with the "net/http" package.
-type Handler = func(ctx *Context) StatusError
+type Handler = func(ctx *RequestContext) StatusError
 
 // MakeHTTPHandler wraps a Handler, producing a handler which can be registered
 // with the "net/http" package. The returned handler is responsible for:
 //  - Constructing a *Context
 //  - Converting any errors into an HTTP response
 func MakeHTTPHandler(handler Handler) func(http.ResponseWriter, *http.Request) {
-	return makeHTTPHandler(NewContext, handler)
+	return makeHTTPHandler(NewRequestContext, handler)
 }
 
 // MakeTestHTTPHandler is like MakeHTTPHandler, except that the generated
@@ -24,13 +24,13 @@ func MakeHTTPHandler(handler Handler) func(http.ResponseWriter, *http.Request) {
 // FIRESTORE_EMULATOR_HOST environment variable rather than attempting to
 // connect to a production Firestore instance.
 func MakeTestHTTPHandler(handler Handler) func(http.ResponseWriter, *http.Request) {
-	return makeHTTPHandler(func(w http.ResponseWriter, r *http.Request) (Context, StatusError) {
-		return NewTestContext(w, r, nil)
+	return makeHTTPHandler(func(w http.ResponseWriter, r *http.Request) (*RequestContext, StatusError) {
+		return NewTestRequestContext(w, r, nil)
 	}, handler)
 }
 
 func makeHTTPHandler(
-	newContext func(w http.ResponseWriter, r *http.Request) (Context, StatusError),
+	newContext func(w http.ResponseWriter, r *http.Request) (*RequestContext, StatusError),
 	handler Handler,
 ) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func makeHTTPHandler(
 			return
 		}
 
-		if err := handler(&ctx); err != nil {
+		if err := handler(ctx); err != nil {
 			writeStatusError(w, r, err)
 		}
 	}
