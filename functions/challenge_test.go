@@ -19,10 +19,10 @@ func TestChallenge(t *testing.T) {
 	req, err := http.NewRequestWithContext(context.Background(), "GET", "/challenge", nil)
 	assert.Nil(t, err)
 	r := httptest.NewRecorder()
-	ctx, err := util.NewTestContext(r, req, firestore)
+	ctx, err := util.NewTestRequestContext(r, req, firestore)
 	assert.Nil(t, err)
 
-	ChallengeHandler(&ctx)
+	ChallengeHandler(ctx)
 
 	// First, unmarshal using pow.Challenge in order to benefit from its
 	// validation.
