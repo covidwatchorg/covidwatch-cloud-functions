@@ -15,6 +15,9 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.platform }}
     steps:
+      - uses: GoogleCloudPlatform/github-actions/setup-gcloud@master
+      - name: Install Google Cloud SDK components
+        run: yes | gcloud components install beta cloud-firestore-emulator
       - name: Install Go
         uses: actions/setup-go@v2
         with:
@@ -22,4 +25,4 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Test
-        run: cd functions && go test ./...
+        run: cd functions && go test -v ./...

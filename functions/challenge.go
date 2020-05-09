@@ -7,11 +7,14 @@ import (
 	"upload-token.functions/internal/util"
 )
 
-// ChallengeHandler is a handler for the /challenge endpoint.
-var ChallengeHandler = util.MakeHTTPHandler(challengeHandler)
+// ChallengeHTTPHandler is an HTTP handler for the /challenge endpoint. It is
+// intended to be registered as a Google Cloud Function by using the
+// --entry-point flag to the `gcloud functions deploy` command.
+var ChallengeHTTPHandler = util.MakeHTTPHandler(ChallengeHandler)
 
-func challengeHandler(ctx *util.Context) util.StatusError {
-	if err := util.ValidateRequestMethod(ctx, "GET", ""); err != nil {
+// ChallengeHandler is a handler for the /challenge endpoint.
+func ChallengeHandler(ctx *util.Context) util.StatusError {
+	if err := ctx.ValidateRequestMethod("GET", ""); err != nil {
 		return err
 	}
 

@@ -24,8 +24,10 @@ const (
 	// Allow challenges to remain valid for one minute to allow for slow
 	// connections. We may need to increase this if we find that there's a tail
 	// of clients whose connections are bad enough that this is too short.
-	expirationPeriod  = 60 * time.Second
-	defaultWorkFactor = 1024
+	expirationPeriod = 60 * time.Second
+	// DefaultWorkFactor is the default work factor used when generating
+	// challenges.
+	DefaultWorkFactor = 1024
 
 	// The name of the Firestore collection of challenges.
 	challengeCollection = "challenges"
@@ -148,7 +150,7 @@ type challengeDoc struct {
 
 // GenerateChallenge generates a new challenge and stores it in the database.
 func GenerateChallenge(ctx *util.Context) (*Challenge, error) {
-	c := generateChallenge(defaultWorkFactor)
+	c := generateChallenge(DefaultWorkFactor)
 
 	doc := challengeDoc{Expiration: time.Now().Add(expirationPeriod)}
 	_, err := ctx.FirestoreClient().Collection(challengeCollection).Doc(c.docID()).Create(ctx, doc)

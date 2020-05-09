@@ -9,10 +9,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"regexp"
+	"strings"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -28,25 +29,64 @@ type Context struct {
 }
 
 // NewContext constructs a new Context from an http.ResponseWriter and an
-// *http.Request.
+// *http.Request. It uses the firestore.DetectProjectID Firestore project, which
+// instructs firestore.NewClient to use environment variables to detect the
+// appropriate Firestore configuration.
 func NewContext(w http.ResponseWriter, r *http.Request) (Context, StatusError) {
 	ctx := r.Context()
-
-	// In production, automatically detect credentials from the environment.
-	projectID := firestore.DetectProjectID
-	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
-		// If we're not in production, then `firestore.DetectProjectID` will
-		// cause `NewClient` to look for credentials which aren't there, and so
-		// the call will fail.
-		projectID = "test"
-	}
-	client, err := firestore.NewClient(ctx, projectID)
+	client, err := firestore.NewClient(ctx, firestore.DetectProjectID)
 	if err != nil {
 		err := NewInternalServerError(err)
 		return Context{}, err
 	}
 
-	return Context{w, r, client, ctx}, nil
+	return Context{
+		resp:    w,
+		req:     r,
+		client:  client,
+		Context: ctx,
+	}, nil
+}
+
+// NewTestContext constructs a new Context from an http.ResponseWriter and an
+// *http.Request. Unlike NewContext, it is intended for use in testing, and uses
+// a Firestore emulator rather than a production Firestore instance. In
+// particular:
+//  - If store is nil, then NewTestContext checks that `FIRESTORE_EMULATOR_HOST`
+//    is set. If it is, then it connects to the Firestore emulator at that host.
+//    If it is not set, an error is returned.
+//  - If store is not nil, then NewTestContext connects to that Firestore
+//    emulator.
+func NewTestContext(w http.ResponseWriter, r *http.Request, store *TestFirestore) (Context, StatusError) {
+	const emulatorHostEnvVar = "FIRESTORE_EMULATOR_HOST"
+
+	projectID := "test"
+	var clientOptions []option.ClientOption
+	if store != nil {
+		opt, err := store.clientOption()
+		if err != nil {
+			return Context{}, NewInternalServerError(err)
+		}
+		clientOptions = append(clientOptions, opt)
+		projectID = store.projectID
+	} else if os.Getenv(emulatorHostEnvVar) == "" {
+		return Context{}, NewInternalServerError(fmt.Errorf(
+			"could not connect to Firestore emulator; %v environment variable not present", emulatorHostEnvVar,
+		))
+	}
+
+	ctx := r.Context()
+	client, err := firestore.NewClient(ctx, projectID, clientOptions...)
+	if err != nil {
+		return Context{}, NewInternalServerError(err)
+	}
+
+	return Context{
+		resp:    w,
+		req:     r,
+		client:  client,
+		Context: ctx,
+	}, nil
 }
 
 // HTTPRequest returns the *http.Request that was used to construct this
@@ -66,10 +106,10 @@ func (c *Context) FirestoreClient() *firestore.Client {
 	return c.client
 }
 
-// ValidateRequestMethod validates that ctx.HTTPRequest().Method == method, and
-// if not, returns an appropriate StatusError.
-func ValidateRequestMethod(ctx *Context, method, err string) StatusError {
-	m := ctx.HTTPRequest().Method
+// ValidateRequestMethod validates that c.HTTPRequest().Method == method, and if
+// not, returns an appropriate StatusError.
+func (c *Context) ValidateRequestMethod(method, err string) StatusError {
+	m := c.HTTPRequest().Method
 	if m != method {
 		return NewMethodNotAllowedError(m)
 	}
@@ -133,7 +173,6 @@ func NewBadRequestError(err error) StatusError {
 // NewMethodNotAllowedError wraps err in a StatusError whose HTTPStatusCode
 // method returns http.StatusMethodNotAllowed and whose Message method returns
 // "unsupported method: " followed by the given method string.
-
 func NewMethodNotAllowedError(method string) StatusError {
 	return statusError{
 		code:  http.StatusMethodNotAllowed,
@@ -142,14 +181,18 @@ func NewMethodNotAllowedError(method string) StatusError {
 }
 
 var (
-	notFoundError = NewBadRequestError(errors.New("not found"))
+	// NotFoundError is an error returned when a resource is not found.
+	NotFoundError = NewBadRequestError(errors.New("not found"))
 )
 
 // FirestoreToStatusError converts an error returned from the
 // "cloud.google.com/go/firestore" package to a StatusError.
 func FirestoreToStatusError(err error) StatusError {
+	if err, ok := err.(StatusError); ok {
+		return err
+	}
 	if status.Code(err) == codes.NotFound {
-		return notFoundError
+		return NotFoundError
 	}
 
 	return NewInternalServerError(err)
@@ -161,6 +204,8 @@ func FirestoreToStatusError(err error) StatusError {
 // internal server errors.
 func JSONToStatusError(err error) StatusError {
 	switch err := err.(type) {
+	case StatusError:
+		return err
 	case *json.MarshalerError, *json.SyntaxError, *json.UnmarshalFieldError,
 		*json.UnmarshalTypeError, *json.UnsupportedTypeError, *json.UnsupportedValueError:
 		return NewBadRequestError(err)
@@ -184,13 +229,13 @@ func ReadCryptoRandBytes(b []byte) {
 // newStatusError constructs a new statusError with the given code and error.
 // The given error will be used as the message returned by StatusError.Message.
 func newStatusError(code int, err error) statusError {
-    return statusError {
-        code: code,
+	return statusError{
+		code:  code,
 		error: err,
 		// Leave empty so that error.Error() will be used as the return value
 		// from Message.
-        message: "",
-    }
+		message: "",
+	}
 }
 
 // checkHTTPS retrieves the scheme from the X-Forwarded-Proto or RFC7239
@@ -205,8 +250,8 @@ var (
 	// De-facto standard header keys.
 	xForwardedProto = http.CanonicalHeaderKey("X-Forwarded-Proto")
 	forwarded       = http.CanonicalHeaderKey("Forwarded") // RFC7239
-	
-	protoRegex 		= regexp.MustCompile(`(?i)(?:proto=)(https|http)`)
+
+	protoRegex = regexp.MustCompile(`(?i)(?:proto=)(https|http)`)
 )
 
 func checkHTTPS(r *http.Request) StatusError {
@@ -228,29 +273,28 @@ func checkHTTPS(r *http.Request) StatusError {
 		}
 	}
 
-	// We want to ensure that clients always use HTTPS. Even if we don't
-	// serve our API over HTTP, if clients use HTTP, they are vulnerable
-	// to man-in-the-middle attacks in which the attacker communicates
-	// with our service over HTTPS. In order to prevent this, it is not
-	// sufficient to simply auto-upgrade to HTTPS (e.g., via a redirect
-	// status code in the 300s). If we do this, then code which
-	// erroneously uses HTTP will continue to work, and so it might get
-	// deployed. Instead, we have to ensure that such code breaks
-	// completely, alerting the code's developers to the issue, and
-	// ensuring that they will change the code to use HTTPS directly.
-	// Thus, we want an error code with the following properties:
-	//  - Guaranteed that smart clients (such as web browsers) will not
-	//    attempt to automatically upgrade to HTTPS
-	//  - Doesn't have another meaning which might cause developers to
-	//    overlook the error or lead them down the wrong path (e.g., if
-	//    we chose 400 - bad request - they might go down the path of
-	//    debugging their request format)
+	// We want to ensure that clients always use HTTPS. Even if we don't serve
+	// our API over HTTP, if clients use HTTP, they are vulnerable to
+	// man-in-the-middle attacks in which the attacker communicates with our
+	// service over HTTPS. In order to prevent this, it is not sufficient to
+	// simply auto-upgrade to HTTPS (e.g., via a redirect status code in the
+	// 300s). If we do this, then code which erroneously uses HTTP will continue
+	// to work, and so it might get deployed. Instead, we have to ensure that
+	// such code breaks completely, alerting the code's developers to the issue,
+	// and ensuring that they will change the code to use HTTPS directly. Thus,
+	// we want an error code with the following properties:
+	//  - Guaranteed that smart clients (such as web browsers) will not attempt
+	//    to automatically upgrade to HTTPS
+	//  - Doesn't have another meaning which might cause developers to overlook
+	//    the error or lead them down the wrong path (e.g., if we chose 400 -
+	//    bad request - they might go down the path of debugging their request
+	//    format)
 	//
-	// For these reasons, we choose error code 418 - server is a teapot.
-	// It is as unlikely as any other error code to cause the client to
-	// automatically upgrade to HTTPS, and it is guaranteed to get a
-	// developer's attention, hopefully getting them to look at the
-	// response body, which will contain the relevant information.
+	// For these reasons, we choose error code 418 - server is a teapot. It is
+	// as unlikely as any other error code to cause the client to automatically
+	// upgrade to HTTPS, and it is guaranteed to get a developer's attention,
+	// hopefully getting them to look at the response body, which will contain
+	// the relevant information.
 	if scheme != "https" {
 		return newStatusError(http.StatusTeapot,
 			errors.New("unsupported protocol HTTP; only HTTPS is supported"))
@@ -258,15 +302,19 @@ func checkHTTPS(r *http.Request) StatusError {
 	return nil
 }
 
-// Add HSTS to force HTTPS usage.
-// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
-// In the following example, max-age is set to 2 years, raised from what was a former
-// limit max-age of 1 year. Note that 1 year is acceptable for a domain to be included
-// in browsers' HSTS preload lists. 2 years is, however, the recommended goal as a
-// website's final HSTS configuration as explained on https://hstspreload.org.
-// It also suffixed with preload which is necessary for inclusion in most major web
-// browsers' HSTS preload lists, e.g. Chromium, Edge, & Firefox.
 var headerHSTS = http.CanonicalHeaderKey("Strict-Transport-Security")
+
+// addHSTS adds HSTS [1] to force HTTPS usage. max-age is set to 2 years, raised
+// from what was a former limit max-age of 1 year. Note that 1 year is
+// acceptable for a domain to be included in browsers' HSTS preload lists. 2
+// years is, however, the recommended goal as a website's final HSTS
+// configuration as explained on [2]. It also suffixed with preload which is
+// necessary for inclusion in most major web browsers' HSTS preload lists, e.g.
+// Chromium, Edge, & Firefox.
+//
+// [1] https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Strict-Transport-Security
+//
+// [2] https://hstspreload.org
 func addHSTS(w http.ResponseWriter) {
 	w.Header().Set(headerHSTS, "max-age=63072000; includeSubDomains; preload")
 }
