@@ -29,7 +29,7 @@ func TestValidate(t *testing.T) {
 
 // On a 2018 MacBook Pro, this takes ~930us per validation.
 func BenchmarkValidate(b *testing.B) {
-	c := generateChallenge(defaultWorkFactor)
+	c := generateChallenge(DefaultWorkFactor)
 	var s Solution
 	for {
 		_, err := rand.Read(s.inner.Nonce[:])
@@ -48,6 +48,6 @@ func BenchmarkValidate(b *testing.B) {
 // On a 2018 MacBook Pro, this takes ~1100ns per validation.
 func BenchmarkGenerate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		generateChallenge(defaultWorkFactor)
+		generateChallenge(DefaultWorkFactor)
 	}
 }
