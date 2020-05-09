@@ -11,7 +11,7 @@ import (
 var ChallengeHandler = util.MakeHTTPHandler(challengeHandler)
 
 func challengeHandler(ctx *util.Context) util.StatusError {
-	if err := util.ValidateRequestMethod(ctx, "GET", ""); err != nil {
+	if err := ctx.ValidateRequestMethod("GET", ""); err != nil {
 		return err
 	}
 

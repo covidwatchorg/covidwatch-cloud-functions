@@ -12,12 +12,9 @@ reports.
 
 1. Install [Go](https://golang.org/) 1.13 or higher
 2. [Install the Google Cloud SDK](https://cloud.google.com/sdk/install).
-3. Tests use the Firestore emulator, which requires some components from the
-   Google Cloud SDK which are not installed by default. In order to install
-   them, run the emulator once using `gcloud beta emulators firestore start`. It
-   will prompt to install any missing components. Once all the necessary
-   components have been installed and the emulator is actually running, you can
-   kill it.
+3. Install components necessary to run the Firestore emulator: `gcloud
+   components install beta cloud-firestore-emulator`. Unit tests use the
+   emulator, so if these components are not installed, unit tests will fail.
 
 ## Run Tests
 

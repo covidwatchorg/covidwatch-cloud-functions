@@ -9,13 +9,28 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"regexp"
+	"strings"
 
 	"cloud.google.com/go/firestore"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// testFirestoreContextKey is a key used to identify a *TestFirestore object.
+// Since it is not exported, there is no way for code outside of this package to
+// overwrite or access values stored with this key.
+type testFirestoreContextKey struct{}
+
+// WithTestFirestore wraps parent, producing a context.Context which stores the
+// given *TestFirestore. If NewContext is called with an *http.Request whose
+// context.Context was produced using this function, it will connect to the
+// TestFirestore instead of consulting the environment to figure out how to
+// connect to a Firestore instance, as is its normal behavior.
+func WithTestFirestore(parent context.Context, store *TestFirestore) context.Context {
+	return context.WithValue(parent, testFirestoreContextKey{}, store)
+}
 
 // Context is a context.Context that provides extra utilities for common
 // operations.
@@ -29,24 +44,49 @@ type Context struct {
 
 // NewContext constructs a new Context from an http.ResponseWriter and an
 // *http.Request.
+//
+// NewContext automatically figures out how to connect to a Firestore instance.
+// In particular:
+//  - In a production environment, it uses the firestore.DetectProjectID
+//    project, which causes firestore.NewClient to use environment variables
+//    to detect the appropriate Firestore configuration.
+// - If r.Context() was created using WithTestFirestore, NewContext will connect
+//   to that TestFirestore instance.
+// - If the `FIRESTORE_EMULATOR_HOST` environment variable is set,
+//   firestore.NewClient will attempt to connect to that host.
 func NewContext(w http.ResponseWriter, r *http.Request) (Context, StatusError) {
 	ctx := r.Context()
 
 	// In production, automatically detect credentials from the environment.
 	projectID := firestore.DetectProjectID
-	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
+	// Attempt to extract a *TestFirestore stored by withTestFirestore.
+	testFirestore := ctx.Value(testFirestoreContextKey{})
+	var clientOptions []option.ClientOption
+	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" || testFirestore != nil {
 		// If we're not in production, then `firestore.DetectProjectID` will
 		// cause `NewClient` to look for credentials which aren't there, and so
 		// the call will fail.
 		projectID = "test"
+		if store, ok := testFirestore.(*TestFirestore); ok {
+			opt, err := store.clientOption()
+			if err != nil {
+				return Context{}, NewInternalServerError(err)
+			}
+			clientOptions = append(clientOptions, opt)
+			projectID = store.projectID
+		}
 	}
-	client, err := firestore.NewClient(ctx, projectID)
+	client, err := firestore.NewClient(ctx, projectID, clientOptions...)
 	if err != nil {
 		err := NewInternalServerError(err)
 		return Context{}, err
 	}
 
-	return Context{w, r, client, ctx}, nil
+	return Context{resp: w,
+		req:     r,
+		client:  client,
+		Context: ctx,
+	}, nil
 }
 
 // HTTPRequest returns the *http.Request that was used to construct this
@@ -66,10 +106,10 @@ func (c *Context) FirestoreClient() *firestore.Client {
 	return c.client
 }
 
-// ValidateRequestMethod validates that ctx.HTTPRequest().Method == method, and
-// if not, returns an appropriate StatusError.
-func ValidateRequestMethod(ctx *Context, method, err string) StatusError {
-	m := ctx.HTTPRequest().Method
+// ValidateRequestMethod validates that c.HTTPRequest().Method == method, and if
+// not, returns an appropriate StatusError.
+func (c *Context) ValidateRequestMethod(method, err string) StatusError {
+	m := c.HTTPRequest().Method
 	if m != method {
 		return NewMethodNotAllowedError(m)
 	}
@@ -142,14 +182,18 @@ func NewMethodNotAllowedError(method string) StatusError {
 }
 
 var (
-	notFoundError = NewBadRequestError(errors.New("not found"))
+	// NotFoundError is an error returned when a resource is not found.
+	NotFoundError = NewBadRequestError(errors.New("not found"))
 )
 
 // FirestoreToStatusError converts an error returned from the
 // "cloud.google.com/go/firestore" package to a StatusError.
 func FirestoreToStatusError(err error) StatusError {
+	if err, ok := err.(StatusError); ok {
+		return err
+	}
 	if status.Code(err) == codes.NotFound {
-		return notFoundError
+		return NotFoundError
 	}
 
 	return NewInternalServerError(err)
@@ -161,6 +205,8 @@ func FirestoreToStatusError(err error) StatusError {
 // internal server errors.
 func JSONToStatusError(err error) StatusError {
 	switch err := err.(type) {
+	case StatusError:
+		return err
 	case *json.MarshalerError, *json.SyntaxError, *json.UnmarshalFieldError,
 		*json.UnmarshalTypeError, *json.UnsupportedTypeError, *json.UnsupportedValueError:
 		return NewBadRequestError(err)
@@ -184,13 +230,13 @@ func ReadCryptoRandBytes(b []byte) {
 // newStatusError constructs a new statusError with the given code and error.
 // The given error will be used as the message returned by StatusError.Message.
 func newStatusError(code int, err error) statusError {
-    return statusError {
-        code: code,
+	return statusError{
+		code:  code,
 		error: err,
 		// Leave empty so that error.Error() will be used as the return value
 		// from Message.
-        message: "",
-    }
+		message: "",
+	}
 }
 
 // checkHTTPS retrieves the scheme from the X-Forwarded-Proto or RFC7239
@@ -205,8 +251,8 @@ var (
 	// De-facto standard header keys.
 	xForwardedProto = http.CanonicalHeaderKey("X-Forwarded-Proto")
 	forwarded       = http.CanonicalHeaderKey("Forwarded") // RFC7239
-	
-	protoRegex 		= regexp.MustCompile(`(?i)(?:proto=)(https|http)`)
+
+	protoRegex = regexp.MustCompile(`(?i)(?:proto=)(https|http)`)
 )
 
 func checkHTTPS(r *http.Request) StatusError {
@@ -267,6 +313,7 @@ func checkHTTPS(r *http.Request) StatusError {
 // It also suffixed with preload which is necessary for inclusion in most major web
 // browsers' HSTS preload lists, e.g. Chromium, Edge, & Firefox.
 var headerHSTS = http.CanonicalHeaderKey("Strict-Transport-Security")
+
 func addHSTS(w http.ResponseWriter) {
 	w.Header().Set(headerHSTS, "max-age=63072000; includeSubDomains; preload")
 }
