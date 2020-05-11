@@ -18,6 +18,16 @@ type Handler = func(ctx *Context) StatusError
 func MakeHTTPHandler(handler func(ctx *Context) StatusError) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := NewContext(w, r)
+
+		// Add HSTS header.
+		addHSTS(w)
+
+		// Reject insecure HTTP requests.
+		if err := checkHTTPS(r); err != nil {
+			writeStatusError(w, r, err)
+			return
+		}
+
 		if err != nil {
 			writeStatusError(w, r, err)
 			return
