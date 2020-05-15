@@ -46,7 +46,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "http://localhost:8081/v1/projects/test/databases/(default)/documents/challenges",
+					"raw": "http://localhost:8081/v1/projects/dev/databases/(default)/documents/challenges",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -55,11 +55,46 @@
 					"path": [
 						"v1",
 						"projects",
-						"test",
+						"dev",
 						"databases",
 						"(default)",
 						"documents",
 						"challenges"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Emulator GET ALL pending_reports",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "owner",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:8081/v1/projects/dev/databases/(default)/documents/pending_reports",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8081",
+					"path": [
+						"v1",
+						"projects",
+						"dev",
+						"databases",
+						"(default)",
+						"documents",
+						"pending_reports"
 					]
 				}
 			},
@@ -103,6 +138,58 @@
 					"port": "8080",
 					"path": [
 						"challenge"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "v1 POST /report with POW",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "owner",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Forwarded-Proto",
+						"value": "https",
+						"description": "Bypass HTTP check (only 1 required)",
+						"type": "text"
+					},
+					{
+						"key": "Forwarded",
+						"value": "for=\\\"localhost\\\";proto=https",
+						"description": "Bypass HTTP check (only 1 required)",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"report\" : {\n      \"data\" : \"9USO+Z30bvZWIKPwZmee0TvkGXBQi7+DqAjtdYZ=\"\n   },\n   \"challenge\" : {\n      \"solution\" : {\n         \"nonce\" : \"00000000000000000000000000001356\"\n      },\n      \"challenge\" : {\n         \"nonce\" : \"c54929ca3d04161cab737e68747a34ff\",\n         \"work_factor\" : 1024\n      }\n   }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:8080/report",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"report"
 					]
 				}
 			},
