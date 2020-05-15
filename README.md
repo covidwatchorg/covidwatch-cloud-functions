@@ -12,12 +12,9 @@ reports.
 
 1. Install [Go](https://golang.org/) 1.13 or higher
 2. [Install the Google Cloud SDK](https://cloud.google.com/sdk/install).
-3. Tests use the Firestore emulator, which requires some components from the
-   Google Cloud SDK which are not installed by default. In order to install
-   them, run the emulator once using `gcloud beta emulators firestore start`. It
-   will prompt to install any missing components. Once all the necessary
-   components have been installed and the emulator is actually running, you can
-   kill it.
+3. Install components necessary to run the Firestore emulator: `gcloud
+   components install beta cloud-firestore-emulator`. Unit tests use the
+   emulator, so if these components are not installed, unit tests will fail.
 
 ## Run Tests
 
@@ -59,7 +56,8 @@ the new one and cause confusion).
 
 If the `--host-port` flag is omitted, the emulator will choose a random port,
 which has a high likelihood of not being in use. The emulator will output which
-address to use by displaying a line like `export FIRESTORE_EMULATOR_HOST=::1:8195`.
+address to use by displaying a line like `export
+FIRESTORE_EMULATOR_HOST=::1:8195`.
 
 Note that, if the local IP address is an IPv6 address (like `::1`), then you
 will need to put square brackets around the address for compatibility with Go's
@@ -79,13 +77,13 @@ curl --request GET 'http://localhost:8080/challenge' \
 
 ### HTTPS
 
-The local dev server uses HTTP so you must send a fake HTTPS header to prevent the
-request from being rejected.
+The local dev server uses HTTP so you must send a fake HTTPS header to prevent
+the request from being rejected.
 
-If you see an error message like this with HTTP Code 426:
+If you see an error message like this with HTTP Code 418:
 
 ```
-{"Error":"Please use HTTPS"}
+{"message":"unsupported protocol HTTP; only HTTPS is supported"}
 ```
 
 You should add either:
@@ -102,8 +100,9 @@ Forwarded: for=\"localhost\";proto=https
 
 ## Firebase Security
 
-Unauthenticated Firestore access is disabled. If you want to bypass the firestore.rules
-on the emulator REST interface just supply the auth bearer header value "owner":
+Unauthenticated Firestore access is disabled. If you want to bypass the
+firestore.rules on the emulator REST interface just supply the auth bearer
+header value "owner":
 
 ```
 Authorization: Bearer owner
@@ -119,5 +118,5 @@ $ ./deploy.sh
 
 ### Postman Collection
 
-You can import the COVID-Watch.postman_collection.json to play with the local
+You can import the `Covid Watch.postman_collection.json` to play with the local
 Cloud Functions and Firestore Emulator.

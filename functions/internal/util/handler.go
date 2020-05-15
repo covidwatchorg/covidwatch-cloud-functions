@@ -6,16 +6,33 @@ import (
 	"net/http"
 )
 
-// Handler is a handler for a request to this service. Use MakeHTTPHandler to
-// wrap a Handler with the logic necessary to produce a handler which can be
-// registered with the "net/http" package.
+// Handler is a handler for a request to this service. Use MakeHTTPHandler or
+// MakeTestHTTPHandler to wrap a Handler with the logic necessary to produce a
+// handler which can be registered with the "net/http" package.
 type Handler = func(ctx *Context) StatusError
 
 // MakeHTTPHandler wraps a Handler, producing a handler which can be registered
 // with the "net/http" package. The returned handler is responsible for:
 //  - Constructing a *Context
 //  - Converting any errors into an HTTP response
-func MakeHTTPHandler(handler func(ctx *Context) StatusError) func(http.ResponseWriter, *http.Request) {
+func MakeHTTPHandler(handler Handler) func(http.ResponseWriter, *http.Request) {
+	return makeHTTPHandler(NewContext, handler)
+}
+
+// MakeTestHTTPHandler is like MakeHTTPHandler, except that the generated
+// handler will attempt to connect to the Firestore emulator at the
+// FIRESTORE_EMULATOR_HOST environment variable rather than attempting to
+// connect to a production Firestore instance.
+func MakeTestHTTPHandler(handler Handler) func(http.ResponseWriter, *http.Request) {
+	return makeHTTPHandler(func(w http.ResponseWriter, r *http.Request) (Context, StatusError) {
+		return NewTestContext(w, r, nil)
+	}, handler)
+}
+
+func makeHTTPHandler(
+	newContext func(w http.ResponseWriter, r *http.Request) (Context, StatusError),
+	handler Handler,
+) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Add HSTS header.
 		addHSTS(w)
@@ -26,7 +43,7 @@ func MakeHTTPHandler(handler func(ctx *Context) StatusError) func(http.ResponseW
 			return
 		}
 
-		ctx, err := NewContext(w, r)
+		ctx, err := newContext(w, r)
 		if err != nil {
 			writeStatusError(w, r, err)
 			return
@@ -47,6 +64,6 @@ func writeStatusError(w http.ResponseWriter, r *http.Request, err StatusError) {
 	w.WriteHeader(err.HTTPStatusCode())
 	json.NewEncoder(w).Encode(response{Message: err.Message()})
 
-	log.Printf("[%v %v %v]: responding with error code %v and message \"%v\" (error: %v)",
-		r.RemoteAddr, r.Method, r.URL, err.HTTPStatusCode(), err.Message(), err)
+	log.Printf("[%v %v]: responding with error code %v and message \"%v\" (error: %v)",
+		r.Method, r.URL, err.HTTPStatusCode(), err.Message(), err)
 }

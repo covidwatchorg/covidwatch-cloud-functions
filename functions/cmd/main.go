@@ -5,13 +5,14 @@ import (
 	"log"
 	"os"
 
-	"upload-token.functions"
-
 	"github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
+
+	functions "upload-token.functions"
+	"upload-token.functions/internal/util"
 )
 
 func main() {
-	funcframework.RegisterHTTPFunction("/challenge", functions.ChallengeHandler)
+	funcframework.RegisterHTTPFunction("/challenge", util.MakeTestHTTPHandler(functions.ChallengeHandler))
 	// Use PORT environment variable, or default to 8080.
 	port := "8080"
 	if envPort := os.Getenv("PORT"); envPort != "" {
