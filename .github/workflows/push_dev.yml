@@ -18,5 +18,11 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - name: Checkout code
         uses: actions/checkout@v2
+      - name: Format
+        # NOTE: We pipe to `tee /dev/stderr` so that any improperly formatted
+        # files are logged to stderr so that they appear in the CI output.
+        run: [ "$(gofmt -l $(find . -type f -name '*.go') | tee /dev/stderr)" == "" ]
+      - name: Vet
+        run: cd functions && go vet ./...
       - name: Test
         run: cd functions && go test ./...
